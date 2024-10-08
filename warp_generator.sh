@@ -3,51 +3,25 @@
 clear
 mkdir -p ~/.cloudshell && touch ~/.cloudshell/no-apt-get-warning
 echo "Установка зависимостей..."
-sudo apt-get update -y --fix-missing && sudo apt-get install wireguard-tools jq -y --fix-missing
 
-priv_default="${1:-$(wg genkey)}"
-pub_default="${2:-$(echo "${priv_default}" | wg pubkey)}"
+priv="${1:-$(wg genkey)}"
+pub="${2:-$(echo "${priv}" | wg pubkey)}"
 api="https://api.cloudflareclient.com/v0i1909051800"
+ins() { curl -s -H 'user-agent:' -H 'content-type: application/json' -X "$1" "${api}/$2" "${@:3}"; }
+sec() { ins "$1" "$2" -H "authorization: Bearer $3" "${@:4}"; }
+response=$(ins POST "reg" -d "{\"install_id\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"key\":\"${pub}\",\"fcm_token\":\"\",\"type\":\"ios\",\"locale\":\"en_US\"}")
 
-ins() {
-    curl -s -H 'user-agent:' -H 'content-type: application/json' -X "$1" "${api}/$2" "${@:3}"
-}
+id=$(echo "$response" | jq -r '.result.id')
+token=$(echo "$response" | jq -r '.result.token')
+response=$(sec PATCH "reg/${id}" "$token" -d '{"warp_enabled":true}')
+peer_pub=$(echo "$response" | jq -r '.result.config.peers[0].public_key')
+peer_endpoint=$(echo "$response" | jq -r '.result.config.peers[0].endpoint.host')
+client_ipv4=$(echo "$response" | jq -r '.result.config.interface.addresses.v4')
+client_ipv6=$(echo "$response" | jq -r '.result.config.interface.addresses.v6')
+port=$(echo "$peer_endpoint" | sed 's/.*:\([0-9]*\)$/\1/')
+peer_endpoint=$(echo "$peer_endpoint" | sed 's/\(.*\):[0-9]*/162.159.193.5/')
 
-sec() {
-    ins "$1" "$2" -H "authorization: Bearer $3" "${@:4}"
-}
-
-generate_config() {
-    local index=$1
-    local priv
-    local pub
-    local response
-    local id
-    local token
-    local peer_pub
-    local peer_endpoint
-    local client_ipv4
-    local client_ipv6
-    local port
-    local conf
-    local conf_base64
-
-    priv="${priv_default}"
-    pub="${pub_default}"
-
-    response=$(ins POST "reg" -d "{\"install_id\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"key\":\"${pub}\",\"fcm_token\":\"\",\"type\":\"ios\",\"locale\":\"en_US\"}")
-
-    id=$(echo "$response" | jq -r '.result.id')
-    token=$(echo "$response" | jq -r '.result.token')
-    response=$(sec PATCH "reg/${id}" "$token" -d '{"warp_enabled":true}')
-    peer_pub=$(echo "$response" | jq -r '.result.config.peers[0].public_key')
-    peer_endpoint=$(echo "$response" | jq -r '.result.config.peers[0].endpoint.host')
-    client_ipv4=$(echo "$response" | jq -r '.result.config.interface.addresses.v4')
-    client_ipv6=$(echo "$response" | jq -r '.result.config.interface.addresses.v6')
-    port=$(echo "$peer_endpoint" | sed 's/.*:\([0-9]*\)$/\1/')
-    peer_endpoint=$(echo "$peer_endpoint" | sed 's/\(.*\):[0-9]*/162.159.193.5/')
-
-    conf=$(cat <<EOM
+conf=$(cat <<-EOM
 [Interface]
 PrivateKey = ${priv}
 S1 = 0
@@ -69,17 +43,11 @@ Endpoint = ${peer_endpoint}:${port}
 EOM
 )
 
-    echo -e "\n########## КОНФИГ ${index} ##########"
-    echo "${conf}"
-    echo "###################################"
+clear
+echo -e "\n\n\n"
+[ -t 1 ] && echo "########## НАЧАЛО КОНФИГА ##########"
+echo "${conf}"
+[ -t 1 ] && echo "########### КОНЕЦ КОНФИГА ###########"
 
-    conf_base64=$(echo -n "${conf}" | base64 -w 0)
-    echo "Скачать конфиг ${index} файлом: https://immalware.github.io/downloader.html?filename=WARP${index}.conf&content=${conf_base64}"
-}
-
-# Количество конфигураций для генерации
-num_configs=${3:-3}
-
-for ((i=1; i<=num_configs; i++)); do
-    generate_config "$i"
-done
+conf_base64=$(echo -n "${conf}" | base64 -w 0)
+echo "Скачать конфиг файлом: https://immalware.github.io/downloader.html?filename=WARP.conf&content=${conf_base64}"
